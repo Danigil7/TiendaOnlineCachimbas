@@ -17,7 +17,7 @@ CREATE TABLE Clientes (
     Direccion VARCHAR(100),
     Telefono VARCHAR(15),
     Email VARCHAR(100),
-    Invitado INT,
+    Invitado int,
     FOREIGN KEY (Invitado) REFERENCES Clientes(ID)
 );
 
@@ -34,7 +34,6 @@ CREATE TABLE DetallesPedido (
     PedidoID INT,
     ProductoID INT,
     Cantidad INT,
-    Precio DECIMAL(10, 2),
     FOREIGN KEY (PedidoID) REFERENCES Pedidos(ID),
     FOREIGN KEY (ProductoID) REFERENCES Productos(ID)
 );
@@ -49,11 +48,3 @@ CREATE table Comentarios (
 	foreign key (ClientesID) references Clientes(ID),
 	foreign key (ProductosID) references Productos(ID)
 );
-
-
-
-
-
-
-
-
