@@ -2,8 +2,15 @@ use TiendaOnlineCachimbas;
 
 -- CONSULTAS --
 	
--- 1. Obtener todos los productos con más de 20 unidades en stock
-select * from productos where Stock > 50;
+-- 1. obtener todos los productos junto con sus respectivos comentarios y la información del cliente que realizó cada comentario
+select P.ID as ProductoID, P.Nombre as ProductoNombre, 
+       C.ID as ClienteID, C.Nombre as ClienteNombre, 
+       CO.Contenido, CO.Valoracion, CO.Fecha
+from Productos P
+left join Comentarios CO on P.ID = CO.ProductosID
+left join Clientes C on CO.ClientesID = C.ID;
+
+
 
 -- 2. Cuenta los comentarios de un producto específico a través de su ID
 select p.Nombre , count(c.ID) 
@@ -12,11 +19,13 @@ inner join comentarios c on p.ID = c.ProductosID
 where c.ProductosID = 9;
 
 -- 3. Muestra los productos que tienen mas de 3 comentarios
-select p.ID, p.Nombre, count(c.ID) as 'Número de comentarios'
-from productos p
-inner join comentarios c on p.ID = c.ProductosID
-group by p.ID, p.Nombre
-having count(c.ID) > 3;
+SELECT p.ID, p.Nombre, COUNT(c.ID) AS 'Número de comentarios'
+FROM Productos p
+LEFT JOIN Comentarios c ON p.ID = c.ProductosID
+GROUP BY p.ID, p.Nombre
+ORDER BY COUNT(c.ID) desc
+LIMIT 1;
+
 		
 	
 -- 4. La subconsulta calcula el promedio de precios de todos los productos en la tabla Productos. Luego, la consulta 
@@ -31,26 +40,14 @@ where Precio > (
 		
 	
 -- 5. Nos muestra los datos de la tabla detallepedidos de los pedidos que estan pendientes
-select *
-from pedidos p 
-inner join detallespedido d on p.ID = d.PedidoID
-where p.Estado = 'Pendiente';
-	
-	
 SELECT *
-FROM detallespedido dp
-inner join pedidos p on dp.PedidoID = p.ID  
+FROM DetallesPedido dp
+inner join Pedidos p on dp.PedidoID = p.ID  
 WHERE PedidoID IN (
 	SELECT ID
-	FROM pedidos p
+	FROM Pedidos p
 	WHERE p.Estado = 'Pendiente'
 );
-	
-	
-SELECT *
-FROM detallespedido dp
-INNER JOIN pedidos p ON dp.PedidoID = p.ID
-WHERE p.Estado LIKE '%Pendiente%';
 
 
 
@@ -59,11 +56,12 @@ WHERE p.Estado LIKE '%Pendiente%';
 	
 -- 1. Vista con la consulta que muestra los productos que tienen mas de 3 comentarios
 create view VistaComentarios as
-select p.ID, p.Nombre, count(c.ID) as 'Número de comentarios'
-from productos p
-inner join comentarios c on p.ID = c.ProductosID
-group by p.ID, p.Nombre
-having count(c.ID) > 3;
+SELECT p.ID, p.Nombre, COUNT(c.ID) AS 'Número de comentarios'
+FROM Productos p
+LEFT JOIN Comentarios c ON p.ID = c.ProductosID
+GROUP BY p.ID, p.Nombre
+ORDER BY COUNT(c.ID) desc
+LIMIT 1;
        
 select * from VistaComentarios;
 	
@@ -73,10 +71,10 @@ select * from VistaComentarios;
 -- calculado en la subconsulta.
 create view VistaMediaPrecio as
 select Nombre, Precio, Stock
-from productos
+from Productos
 where Precio > (
 	select AVG(Precio)
-	from productos
+	from Productos
 );
 	
 select * from VistaMediaPrecio;
@@ -96,7 +94,7 @@ begin
 	declare promedio decimal(10, 2);
 	            
 	select avg(Precio) into promedio
-	from productos;
+	from Productos p ;
 	            
 	return promedio;
             
@@ -117,43 +115,44 @@ begin
 declare cantidad_comentarios int;
 
 select count(*) into cantidad_comentarios
-from comentarios
+from Comentarios c 
 where ProductosID = producto_id;
 return cantidad_comentarios;
             
 end &&
 delimiter ;
 
-select ObtenerCantidadComentarios(72);
+select ObtenerCantidadComentarios(1);
 	
 	
 	
 	
 -- PROCEDIMIENTOS --
 	
--- 1. Procedimiento que hace mete datos random a los ProductosID de la tabla Comentarios. Es un bucle que va aumentando el indice hasta que este llegue a mil.
-       
-DROP PROCEDURE IF EXISTS cargarrandom;
+-- 1. Este procedimiento toma como parámetro el ID de un cliente y devuelve una lista de pedidos realizados 
+-- por ese cliente, incluyendo información sobre la fecha del pedido, el estado, la cantidad de productos y 
+-- los detalles de cada producto (nombre y precio).
+
+DROP PROCEDURE IF EXISTS ObtenerPedidosPorCliente;
 delimiter &&
-create procedure cargarrandom()
+create procedure ObtenerPedidosPorCliente(in clienteID int)
 begin
-	declare i int default 0;
-	declare r int;	
-	while (i<1000) do
-		select floor( RAND()*1000) into r;
-		update comentarios c set c.ProductosID = r where c.ID = i;
-		set i = i+1;
-	end while;	
-end &&
+    select p.ID, p.Fecha, p.Estado, dp.Cantidad, pr.Nombre, pr.Precio
+    from Pedidos p
+    inner join DetallesPedido dp ON p.ID = dp.PedidoID
+    inner join Productos pr ON dp.ProductoID = pr.ID
+    where p.ClienteID = clienteID;
+end&&
 delimiter ;
-		
-call cargarrandom();
+
+call ObtenerPedidosPorCliente(2);
 
 	
--- 2. Recorre la tabla "productos" y muestras los productos que no tienen stock
+-- 2. Este procedimiento muestra los productos agotados:
 
 DROP PROCEDURE IF EXISTS obtener_productos_agotados;
 DELIMITER &&
+
 CREATE PROCEDURE obtener_productos_agotados()
 BEGIN
     -- Variables para almacenar los datos del producto
@@ -161,33 +160,44 @@ BEGIN
     DECLARE producto_nombre VARCHAR(100);
     DECLARE producto_stock INT;
     
+    -- Variable para almacenar el resultado
+    DECLARE resultado VARCHAR(5000) DEFAULT '';
+    
     -- Definir el cursor
     DECLARE productos_cursor CURSOR FOR
         SELECT p.ID , p.Nombre , p.Stock 
-        FROM productos p
-        WHERE p.Stock = '0';
+        FROM Productos p
+        WHERE p.Stock = 0;
+    
+    -- Declarar un handler para evitar el error cuando no hay datos
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET @done = 1;
     
     -- Abrir el cursor
     OPEN productos_cursor;
     
-    -- Recorrer y mostrar los productos agotados
-    FETCH productos_cursor INTO producto_id, producto_nombre, producto_stock;
-    WHILE producto_id IS NOT NULL do
-        -- Realizar acciones con el producto agotado
-        SELECT CONCAT('Producto ID: ', producto_id, ', Nombre: ', producto_nombre, ', Stock: ', producto_stock) AS ProductoAgotado;
-        
-        -- Leer el siguiente valor del cursor
+    -- Inicializar variable para controlar el fin del cursor
+    SET @done = 0;
+    
+    -- Recorrer y concatenar los productos agotados
+    product_loop: LOOP
         FETCH productos_cursor INTO producto_id, producto_nombre, producto_stock;
-    END WHILE;
+        IF @done THEN
+            LEAVE product_loop;
+        END IF;
+        
+        -- Concatenar el resultado
+        SET resultado = CONCAT(resultado, 'Producto ID: ', producto_id, ', Nombre: ', producto_nombre, ', Stock: ', producto_stock, '\n');
+    END LOOP;
     
     -- Cerrar el cursor
     CLOSE productos_cursor;
     
+    -- Mostrar el resultado como un listado
+    SELECT GROUP_CONCAT(resultado SEPARATOR '\n') AS ProductosAgotados;
+    
 END &&
 DELIMITER ;
-
-CALL obtener_productos_agotados();
-
+call obtener_productos_agotados();
 
 -- 3. Procedimiento que hace uso de una función (Función que devuelve el número de comentarios que tiene el producto que le indiquemos):
 	
@@ -207,7 +217,7 @@ BEGIN
 END &&
 DELIMITER ;
 
-CALL MostrarInfoProducto(72);
+CALL MostrarInfoProducto(1);
 
 
   
@@ -230,20 +240,32 @@ DELIMITER ;
 
 
         
--- 2. Este trigger se ejecutará antes de cada inserción en la tabla "Clientes" y verificará si el campo "Email" está en blanco o es nulo. Si el campo "Email" está vacío o nulo, el valor de la columna "Invitado" se establecerá en 'Cliente invitado'. De lo contrario, el valor de la columna "Invitado" se establecerá en 'Cliente no invitado'.
+-- 2. Trigger para actualizar el stock después de insertar un nuevo detalle de pedido:
 
-use TiendaOnlineCachimbas;
+USE TiendaOnlineCachimbas;
         
-drop trigger if exists ActualizarInvitado;
-delimiter &&
-create trigger ActualizarInvitado
-before insert on clientes
-for each row
-begin
-	if new.Email = '' OR new.Email is null then
-		set new.Invitado = 'Cliente invitado';
-	else
-		set new.Invitado = 'Cliente no invitado';
-	end if;
-end &&
-delimiter ;
+DROP TRIGGER IF EXISTS ActualizarStock;
+DELIMITER &&
+CREATE TRIGGER ActualizarStock AFTER INSERT ON DetallesPedido
+FOR EACH ROW
+BEGIN
+    UPDATE Productos
+    SET Stock = Stock - NEW.Cantidad
+    WHERE ID = NEW.ProductoID;
+END&&
+DELIMITER ;
+
+insert into DetallesPedido values ('1001','2','2','1');
+
+
+select *
+from Productos p;
+
+
+
+
+
+
+
+
+
